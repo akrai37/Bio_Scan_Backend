@@ -12,6 +12,16 @@ class LLMProvider(ABC):
         """Analyze protocol and return structured results"""
         pass
     
+    @abstractmethod
+    def generate_fix(self, issue: str, description: str, protocol_context: str) -> Dict:
+        """Generate a specific fix for an identified issue"""
+        pass
+    
+    @abstractmethod
+    def generate_improved_protocol(self, original_protocol: str, fixes_to_apply: List[Dict]) -> Dict:
+        """Generate an improved version of the protocol with fixes applied"""
+        pass
+    
     def _parse_analysis(self, raw_response: str) -> Dict:
         """Parse LLM response into structured format"""
         try:
@@ -43,7 +53,7 @@ class GroqProvider(LLMProvider):
         if not api_key:
             raise ValueError("GROQ_API_KEY not found in environment variables")
         self.client = Groq(api_key=api_key)
-        self.model = "llama-3.1-70b-versatile"  # Fast and capable
+        self.model = "llama-3.3-70b-versatile"  # Updated model
     
     def analyze_protocol(self, protocol_text: str) -> Dict:
         """Analyze protocol using Groq"""
@@ -133,6 +143,126 @@ Return your analysis as a JSON object with this exact structure:
 
 Be specific and reference actual details from the protocol. If information is missing, flag it."""
 
+    def generate_fix(self, issue: str, description: str, protocol_context: str) -> Dict:
+        """Generate a specific fix for an identified issue using Groq"""
+        
+        prompt = f"""You are an expert protocol designer. A specific issue has been identified in an experimental protocol.
+
+ISSUE: {issue}
+DESCRIPTION: {description}
+
+PROTOCOL CONTEXT:
+{protocol_context[:4000]}
+
+Generate a concrete, actionable fix for this issue. Provide:
+1. A clear fix suggestion (2-3 sentences explaining what to add/change)
+2. Step-by-step implementation instructions
+
+Return your response as a JSON object with this exact structure:
+{{
+    "fix_suggestion": "<clear explanation of the fix>",
+    "implementation_steps": [
+        "<step 1>",
+        "<step 2>",
+        "<step 3>"
+    ]
+}}
+
+Be specific and actionable. Reference actual protocol details when possible."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert protocol designer who provides clear, actionable solutions."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.4,
+                max_tokens=1000,
+                response_format={"type": "json_object"}
+            )
+            
+            result = response.choices[0].message.content
+            parsed = json.loads(result)
+            return parsed
+            
+        except Exception as e:
+            raise Exception(f"Groq API error generating fix: {str(e)}")
+
+    def generate_improved_protocol(self, original_protocol: str, fixes_to_apply: List[Dict]) -> Dict:
+        """Generate an improved version of the protocol with fixes applied"""
+        
+        fixes_summary = "\n\n".join([
+            f"ISSUE: {fix['issue']}\n" +
+            f"DESCRIPTION: {fix.get('description', '')}\n" +
+            f"FIX: {fix['fix_suggestion']}\n" +
+            f"IMPLEMENTATION:\n" + "\n".join([f"  {i+1}. {step}" for i, step in enumerate(fix.get('implementation_steps', []))])
+            for fix in fixes_to_apply
+        ])
+        
+        prompt = f"""You are an expert protocol editor. You need to make TARGETED, SURGICAL changes to this protocol - ONLY for the specific issues listed below.
+
+ORIGINAL PROTOCOL:
+{original_protocol[:6000]}
+
+SELECTED FIXES TO APPLY:
+{fixes_summary}
+
+CRITICAL INSTRUCTIONS:
+1. Start with the EXACT original protocol text
+2. Make ONLY the specific changes needed for the fixes listed above
+3. DO NOT rewrite or improve other parts of the protocol
+4. Keep everything else EXACTLY as it was in the original
+5. Only add/modify the specific sections related to the selected fixes
+6. If a fix requires adding information (e.g., temperature, concentration), add it inline where appropriate
+7. If a fix requires adding a new section (e.g., control group), add only that section
+8. DO NOT make changes to parts of the protocol not mentioned in the fixes
+
+Your output should be the original protocol with MINIMAL, TARGETED modifications for only the selected issues.
+
+Also estimate the new success probability (0-100%) for the improved protocol based on the fixes applied.
+
+Return your response as a JSON object with this exact structure:
+{{
+    "improved_protocol": "<the protocol with ONLY the selected fixes applied>",
+    "changes_made": [
+        "<specific change 1 - what was added/modified>",
+        "<specific change 2 - what was added/modified>"
+    ],
+    "new_success_probability": <integer 0-100>
+}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert protocol editor who makes precise, targeted improvements."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.5,
+                max_tokens=4000,
+                response_format={"type": "json_object"}
+            )
+            
+            result = response.choices[0].message.content
+            parsed = json.loads(result)
+            return parsed
+            
+        except Exception as e:
+            raise Exception(f"Groq API error generating improved protocol: {str(e)}")
+
 
 class ClaudeProvider(LLMProvider):
     """Anthropic Claude Provider"""
@@ -174,6 +304,118 @@ class ClaudeProvider(LLMProvider):
     def _build_analysis_prompt(self, protocol_text: str) -> str:
         """Build the analysis prompt (same as Groq for consistency)"""
         return GroqProvider._build_analysis_prompt(self, protocol_text)
+
+    def generate_fix(self, issue: str, description: str, protocol_context: str) -> Dict:
+        """Generate a specific fix using Claude"""
+        prompt = f"""You are an expert protocol designer. A specific issue has been identified in an experimental protocol.
+
+ISSUE: {issue}
+DESCRIPTION: {description}
+
+PROTOCOL CONTEXT:
+{protocol_context[:4000]}
+
+Generate a concrete, actionable fix for this issue. Provide:
+1. A clear fix suggestion (2-3 sentences explaining what to add/change)
+2. Step-by-step implementation instructions
+
+Return your response as a JSON object with this exact structure:
+{{
+    "fix_suggestion": "<clear explanation of the fix>",
+    "implementation_steps": [
+        "<step 1>",
+        "<step 2>",
+        "<step 3>"
+    ]
+}}
+
+Be specific and actionable. Reference actual protocol details when possible."""
+
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=1000,
+                temperature=0.4,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+            
+            result = response.content[0].text
+            parsed = json.loads(result)
+            return parsed
+            
+        except Exception as e:
+            raise Exception(f"Claude API error generating fix: {str(e)}")
+
+    def generate_improved_protocol(self, original_protocol: str, fixes_to_apply: List[Dict]) -> Dict:
+        """Generate improved protocol using Claude"""
+        fixes_summary = "\n\n".join([
+            f"ISSUE: {fix['issue']}\n" +
+            f"DESCRIPTION: {fix.get('description', '')}\n" +
+            f"FIX: {fix['fix_suggestion']}\n" +
+            f"IMPLEMENTATION:\n" + "\n".join([f"  {i+1}. {step}" for i, step in enumerate(fix.get('implementation_steps', []))])
+            for fix in fixes_to_apply
+        ])
+        
+        prompt = f"""You are an expert protocol editor. Apply the following fixes to the protocol.
+
+ORIGINAL PROTOCOL:
+{original_protocol[:6000]}
+
+FIXES TO APPLY:
+{fixes_summary}
+
+INSTRUCTIONS:
+1. Copy the original protocol text
+2. For each fix listed above, find the relevant section and make the specific change
+3. Add missing information where specified (temperatures, concentrations, controls, etc.)
+4. If a fix requires adding a new section (e.g., control group), add it in the appropriate place
+5. Keep other parts of the protocol unchanged
+6. The improved protocol MUST be different from the original - the fixes MUST be visible
+
+IMPORTANT: The "improved_protocol" field MUST show actual changes. Don't just copy the original.
+For example:
+- If a fix says "add temperature", the protocol must show "incubate at 37°C" instead of just "incubate"
+- If a fix says "add negative control", the protocol must have a new control group section
+- If a fix says "specify concentration", the protocol must show "2 mg/ml" instead of just "antibody"
+
+Estimate the new success probability based on:
+- Original score + (5-10% per critical issue fixed) + (2-3% per warning fixed)
+- Don't go above 85-90% unless ALL major issues are fixed
+
+Return your response as a JSON object:
+{{
+    "improved_protocol": "<the complete protocol with fixes applied - MUST be different from original>",
+    "changes_made": [
+        "<what was added/changed for fix 1>",
+        "<what was added/changed for fix 2>"
+    ],
+    "new_success_probability": <integer 0-100>
+}}"""
+
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=4000,
+                temperature=0.5,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+            
+            result = response.content[0].text
+            parsed = json.loads(result)
+            return parsed
+            
+        except Exception as e:
+            raise Exception(f"Claude API error generating improved protocol: {str(e)}")
 
 
 class OpenAIProvider(LLMProvider):
@@ -221,6 +463,128 @@ class OpenAIProvider(LLMProvider):
     def _build_analysis_prompt(self, protocol_text: str) -> str:
         """Build the analysis prompt (same as Groq for consistency)"""
         return GroqProvider._build_analysis_prompt(self, protocol_text)
+
+    def generate_fix(self, issue: str, description: str, protocol_context: str) -> Dict:
+        """Generate a specific fix using OpenAI"""
+        prompt = f"""You are an expert protocol designer. A specific issue has been identified in an experimental protocol.
+
+ISSUE: {issue}
+DESCRIPTION: {description}
+
+PROTOCOL CONTEXT:
+{protocol_context[:4000]}
+
+Generate a concrete, actionable fix for this issue. Provide:
+1. A clear fix suggestion (2-3 sentences explaining what to add/change)
+2. Step-by-step implementation instructions
+
+Return your response as a JSON object with this exact structure:
+{{
+    "fix_suggestion": "<clear explanation of the fix>",
+    "implementation_steps": [
+        "<step 1>",
+        "<step 2>",
+        "<step 3>"
+    ]
+}}
+
+Be specific and actionable. Reference actual protocol details when possible."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert protocol designer who provides clear, actionable solutions."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.4,
+                max_tokens=1000,
+                response_format={"type": "json_object"}
+            )
+            
+            result = response.choices[0].message.content
+            parsed = json.loads(result)
+            return parsed
+            
+        except Exception as e:
+            raise Exception(f"OpenAI API error generating fix: {str(e)}")
+
+    def generate_improved_protocol(self, original_protocol: str, fixes_to_apply: List[Dict]) -> Dict:
+        """Generate improved protocol using OpenAI"""
+        fixes_summary = "\n\n".join([
+            f"ISSUE: {fix['issue']}\n" +
+            f"DESCRIPTION: {fix.get('description', '')}\n" +
+            f"FIX: {fix['fix_suggestion']}\n" +
+            f"IMPLEMENTATION:\n" + "\n".join([f"  {i+1}. {step}" for i, step in enumerate(fix.get('implementation_steps', []))])
+            for fix in fixes_to_apply
+        ])
+        
+        prompt = f"""You are an expert protocol editor. Apply the following fixes to the protocol.
+
+ORIGINAL PROTOCOL:
+{original_protocol[:6000]}
+
+FIXES TO APPLY:
+{fixes_summary}
+
+INSTRUCTIONS:
+1. Copy the original protocol text
+2. For each fix listed above, find the relevant section and make the specific change
+3. Add missing information where specified (temperatures, concentrations, controls, etc.)
+4. If a fix requires adding a new section (e.g., control group), add it in the appropriate place
+5. Keep other parts of the protocol unchanged
+6. The improved protocol MUST be different from the original - the fixes MUST be visible
+
+IMPORTANT: The "improved_protocol" field MUST show actual changes. Don't just copy the original.
+For example:
+- If a fix says "add temperature", the protocol must show "incubate at 37°C" instead of just "incubate"
+- If a fix says "add negative control", the protocol must have a new control group section
+- If a fix says "specify concentration", the protocol must show "2 mg/ml" instead of just "antibody"
+
+Estimate the new success probability based on:
+- Original score + (5-10% per critical issue fixed) + (2-3% per warning fixed)
+- Don't go above 85-90% unless ALL major issues are fixed
+
+Return your response as a JSON object:
+{{
+    "improved_protocol": "<the complete protocol with fixes applied - MUST be different from original>",
+    "changes_made": [
+        "<what was added/changed for fix 1>",
+        "<what was added/changed for fix 2>"
+    ],
+    "new_success_probability": <integer 0-100>
+}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert protocol editor who makes precise, targeted improvements."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.5,
+                max_tokens=4000,
+                response_format={"type": "json_object"}
+            )
+            
+            result = response.choices[0].message.content
+            parsed = json.loads(result)
+            return parsed
+            
+        except Exception as e:
+            raise Exception(f"OpenAI API error generating improved protocol: {str(e)}")
 
 
 def get_llm_provider() -> LLMProvider:

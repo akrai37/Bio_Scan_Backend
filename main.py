@@ -1,10 +1,14 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import os
+from dotenv import load_dotenv
 from pdf_parser import extract_text_from_pdf
 from llm_providers import get_llm_provider
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI(title="BioScan API", version="1.0.0")
 
@@ -26,6 +30,25 @@ class AnalysisResult(BaseModel):
     estimated_time: Optional[str] = None
     suggestions: List[str]
     raw_analysis: str
+    protocol_text: str
+
+class FixRequest(BaseModel):
+    issue: str
+    description: str
+    protocol_context: str
+
+class FixResponse(BaseModel):
+    fix_suggestion: str
+    implementation_steps: List[str]
+
+class ImprovedProtocolRequest(BaseModel):
+    original_protocol: str
+    fixes_to_apply: List[Dict[str, Any]]  # Changed to Any to accept lists
+
+class ImprovedProtocolResponse(BaseModel):
+    improved_protocol: str
+    changes_made: List[str]
+    new_success_probability: int
 
 @app.get("/")
 async def root():
@@ -72,6 +95,9 @@ async def analyze_protocol(file: UploadFile = File(...)):
         llm_provider = get_llm_provider()
         analysis_result = llm_provider.analyze_protocol(protocol_text)
         
+        # Add protocol text to response
+        analysis_result["protocol_text"] = protocol_text
+        
         return analysis_result
         
     except HTTPException:
@@ -86,6 +112,49 @@ async def get_available_providers():
         "available": ["groq", "claude", "openai"],
         "current": os.getenv("LLM_PROVIDER", "groq")
     }
+
+@app.post("/api/generate-fix", response_model=FixResponse)
+async def generate_fix(request: FixRequest):
+    """
+    Generate a specific fix suggestion for an identified issue
+    
+    Args:
+        request: FixRequest containing issue, description, and protocol context
+        
+    Returns:
+        FixResponse with actionable fix suggestion and implementation steps
+    """
+    try:
+        llm_provider = get_llm_provider()
+        fix_result = llm_provider.generate_fix(
+            issue=request.issue,
+            description=request.description,
+            protocol_context=request.protocol_context
+        )
+        return fix_result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating fix: {str(e)}")
+
+@app.post("/api/generate-improved-protocol", response_model=ImprovedProtocolResponse)
+async def generate_improved_protocol(request: ImprovedProtocolRequest):
+    """
+    Generate an improved version of the protocol with selected fixes applied
+    
+    Args:
+        request: ImprovedProtocolRequest containing original protocol and fixes to apply
+        
+    Returns:
+        ImprovedProtocolResponse with improved protocol text and summary of changes
+    """
+    try:
+        llm_provider = get_llm_provider()
+        improved_result = llm_provider.generate_improved_protocol(
+            original_protocol=request.original_protocol,
+            fixes_to_apply=request.fixes_to_apply
+        )
+        return improved_result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating improved protocol: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
