@@ -22,6 +22,11 @@ class LLMProvider(ABC):
         """Generate an improved version of the protocol with fixes applied"""
         pass
     
+    @abstractmethod
+    def extract_reagents(self, protocol_text: str) -> Dict:
+        """Extract ALL reagents from protocol and generate shopping list with pricing"""
+        pass
+    
     def _parse_analysis(self, raw_response: str) -> Dict:
         """Parse LLM response into structured format"""
         try:
@@ -219,10 +224,7 @@ CRITICAL INSTRUCTIONS:
 2. Make ONLY the specific changes needed for the fixes listed above
 3. DO NOT rewrite or improve other parts of the protocol
 4. Keep everything else EXACTLY as it was in the original
-5. Only add/modify the specific sections related to the selected fixes
-6. If a fix requires adding information (e.g., temperature, concentration), add it inline where appropriate
-7. If a fix requires adding a new section (e.g., control group), add only that section
-8. DO NOT make changes to parts of the protocol not mentioned in the fixes
+5. DO NOT make changes to parts of the protocol not mentioned in the fixes
 
 Your output should be the original protocol with MINIMAL, TARGETED modifications for only the selected issues.
 
@@ -231,6 +233,17 @@ Also estimate the new success probability (0-100%) for the improved protocol bas
 Return your response as a JSON object with this exact structure:
 {{
     "improved_protocol": "<the protocol with ONLY the selected fixes applied>",
+    "changes_made": [
+- Each mention should include specifications (concentration, quantity, etc.)
+- This ensures shopping list will match what's needed
+
+Your output should be the original protocol with MINIMAL, TARGETED modifications for only the selected issues, plus a complete Materials section update.
+
+Also estimate the new success probability (0-100%) for the improved protocol based on the fixes applied.
+
+Return your response as a JSON object with this exact structure:
+{{
+    "improved_protocol": "<the protocol with ONLY the selected fixes applied AND complete Materials section>",
     "changes_made": [
         "<specific change 1 - what was added/modified>",
         "<specific change 2 - what was added/modified>"
@@ -262,6 +275,136 @@ Return your response as a JSON object with this exact structure:
             
         except Exception as e:
             raise Exception(f"Groq API error generating improved protocol: {str(e)}")
+
+    def extract_reagents(self, protocol_text: str) -> Dict:
+        """Extract ALL reagents from protocol and generate shopping list with pricing"""
+        
+        prompt = f"""You are a laboratory procurement specialist. Your ONLY job is to copy items from the Materials section - nothing more.
+
+PROTOCOL:
+{protocol_text[:4000]}
+
+**🚨 CRITICAL DEMO REQUIREMENT - READ CAREFULLY:**
+
+This shopping list will be shown side-by-side with the protocol in a hackathon demo.
+The judges MUST see a PERFECT 1-to-1 match between the Materials section and the shopping list.
+If you add items not in Materials = looks like AI hallucination (DEMO FAILS)
+If you skip items in Materials = looks like broken feature (DEMO FAILS)
+
+**YOUR EXACT TASK:**
+1. Find the "Materials" section in the protocol above
+2. Extract EVERY item listed in that Materials section
+3. Extract NOTHING else - no assumptions, no helpful additions
+4. Use EXACT names as written (copy-paste accuracy)
+
+**FORBIDDEN BEHAVIORS (These will cause demo failure):**
+✗ DO NOT extract from "Procedure" / "Protocol Steps" / "Methods" sections
+✗ DO NOT extract from "Notes" / "Quality Control" sections
+✗ DO NOT add "common lab items" (pipette tips, tubes, gloves, timer, ice)
+✗ DO NOT expand abbreviations (if Materials says "BSA", don't say "Bovine Serum Albumin")
+✗ DO NOT add related items (if Materials says "buffer", don't add "wash buffer")
+✗ DO NOT assume typical ELISA/PCR/Western blot reagents
+✗ DO NOT be helpful - this is TEXT EXTRACTION, not protocol design
+
+**REQUIRED BEHAVIOR:**
+✓ Materials lists "Anti-IL-6 antibody" → Shopping list shows "Anti-IL-6 antibody"
+✓ Materials lists "PBS (pH 7.4)" → Shopping list shows "PBS (pH 7.4)"
+✓ Materials lists "96-well plate" → Shopping list shows "96-well plate"
+✓ Materials has 5 items → Shopping list shows EXACTLY 5 items
+✓ Materials has 12 items → Shopping list shows EXACTLY 12 items
+
+**LITMUS TEST:**
+Before returning, ask yourself: "Can I draw a line from each shopping list item to its exact match in the Materials section?"
+If NO → You invented something → DELETE IT
+If YES → Perfect match → Include it
+
+**CONCRETE EXAMPLE - STUDY THIS:**
+If the Materials section contains:
+"Primary antibody (1:1000), secondary antibody (1:5000), buffer, detection reagent, and assay plate."
+
+Then your JSON should have EXACTLY 5 items total:
+1. Primary antibody (1:1000)
+2. Secondary antibody (1:5000)  
+3. Buffer
+4. Detection reagent
+5. Assay plate
+
+DO NOT ADD:
+✗ "tubes" - NOT in Materials
+✗ "wash buffer" - Materials says "buffer", not "wash buffer"
+✗ "pipette tips" - NOT in Materials
+✗ "PBS" - NOT in Materials
+✗ "blocking buffer" - NOT in Materials
+
+If it's not explicitly written in Materials, DELETE IT from your output.
+
+For PRICING ONLY:
+- Use reasonable market prices: Antibodies $150-400, Enzymes $80-250, Buffers $30-90
+
+Return JSON:
+{{
+    "categories": [
+        {{
+            "name": "Antibodies & Proteins",
+            "items": [
+                {{
+                    "name": "<exact name from protocol>",
+                    "concentration": "<exact value from protocol or empty>",
+                    "quantity": "<exact value from protocol or empty>",
+                    "estimated_price": <price>,
+                    "checked": false
+                }}
+            ]
+        }},
+        {{
+            "name": "Reagents & Substrates",
+            "items": [...]
+        }},
+        {{
+            "name": "Consumables",
+            "items": [...]
+        }},
+        {{
+            "name": "Buffers & Solutions",
+            "items": [...]
+        }}
+    ],
+    "total_cost": 0
+}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a laboratory procurement specialist who extracts reagent lists from protocols."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.4,
+                max_tokens=2500,
+                response_format={"type": "json_object"}
+            )
+            
+            result = response.choices[0].message.content
+            parsed = json.loads(result)
+            
+            # Calculate total cost
+            total = sum(
+                item["estimated_price"]
+                for category in parsed.get("categories", [])
+                for item in category.get("items", [])
+            )
+            parsed["total_cost"] = total
+            
+            return parsed
+            
+        except Exception as e:
+            raise Exception(f"Groq API error extracting reagents: {str(e)}")
 
 
 class ClaudeProvider(LLMProvider):
@@ -373,15 +516,27 @@ INSTRUCTIONS:
 1. Copy the original protocol text
 2. For each fix listed above, find the relevant section and make the specific change
 3. Add missing information where specified (temperatures, concentrations, controls, etc.)
-4. If a fix requires adding a new section (e.g., control group), add it in the appropriate place
-5. Keep other parts of the protocol unchanged
-6. The improved protocol MUST be different from the original - the fixes MUST be visible
+4. If a fix introduces NEW materials/reagents/controls/information, apply it EVERYWHERE it's relevant:
+   - Add to Materials section at the top
+   - Add to the specific protocol step where it's used
+   - Add to any other sections that reference it
+5. Ensure consistency throughout - if you add something, it should be mentioned in all relevant places
+6. If a fix requires adding a new section (e.g., control group), add it in the appropriate place
+7. Keep other parts of the protocol unchanged
+8. The improved protocol MUST be different from the original - the fixes MUST be visible
+
+CONSISTENCY RULE:
+- Any material/reagent/control added by a fix must be referenced consistently throughout the protocol
+- Materials section must list everything mentioned anywhere in the protocol
+- Each mention should be complete with specifications (concentration, quantity, timing, etc.)
+- This ensures the protocol is internally consistent and the shopping list will be accurate
 
 IMPORTANT: The "improved_protocol" field MUST show actual changes. Don't just copy the original.
 For example:
 - If a fix says "add temperature", the protocol must show "incubate at 37°C" instead of just "incubate"
 - If a fix says "add negative control", the protocol must have a new control group section
 - If a fix says "specify concentration", the protocol must show "2 mg/ml" instead of just "antibody"
+- If a fix adds BSA for blocking, BSA must be in BOTH the Materials section AND the blocking step
 
 Estimate the new success probability based on:
 - Original score + (5-10% per critical issue fixed) + (2-3% per warning fixed)
@@ -416,6 +571,114 @@ Return your response as a JSON object:
             
         except Exception as e:
             raise Exception(f"Claude API error generating improved protocol: {str(e)}")
+
+    def extract_reagents(self, protocol_text: str) -> Dict:
+        """Extract ALL reagents from protocol and generate shopping list with pricing"""
+        
+        prompt = f"""You are a laboratory procurement specialist. Your ONLY job is to copy items from the Materials section - nothing more.
+
+PROTOCOL:
+{protocol_text[:4000]}
+
+**🚨 CRITICAL DEMO REQUIREMENT - READ CAREFULLY:**
+
+This shopping list will be shown side-by-side with the protocol in a hackathon demo.
+The judges MUST see a PERFECT 1-to-1 match between the Materials section and the shopping list.
+If you add items not in Materials = looks like AI hallucination (DEMO FAILS)
+If you skip items in Materials = looks like broken feature (DEMO FAILS)
+
+**YOUR EXACT TASK:**
+1. Find the "Materials" section in the protocol above
+2. Extract EVERY item listed in that Materials section
+3. Extract NOTHING else - no assumptions, no helpful additions
+4. Use EXACT names as written (copy-paste accuracy)
+
+**FORBIDDEN BEHAVIORS (These will cause demo failure):**
+✗ DO NOT extract from "Procedure" / "Protocol Steps" / "Methods" sections
+✗ DO NOT extract from "Notes" / "Quality Control" sections
+✗ DO NOT add "common lab items" (pipette tips, tubes, gloves, timer, ice)
+✗ DO NOT expand abbreviations (if Materials says "BSA", don't say "Bovine Serum Albumin")
+✗ DO NOT add related items (if Materials says "buffer", don't add "wash buffer")
+✗ DO NOT assume typical ELISA/PCR/Western blot reagents
+✗ DO NOT be helpful - this is TEXT EXTRACTION, not protocol design
+
+**REQUIRED BEHAVIOR:**
+✓ Materials lists "Anti-IL-6 antibody" → Shopping list shows "Anti-IL-6 antibody"
+✓ Materials lists "PBS (pH 7.4)" → Shopping list shows "PBS (pH 7.4)"
+✓ Materials lists "96-well plate" → Shopping list shows "96-well plate"
+✓ Materials has 5 items → Shopping list shows EXACTLY 5 items
+✓ Materials has 12 items → Shopping list shows EXACTLY 12 items
+
+**LITMUS TEST:**
+Before returning, ask yourself: "Can I draw a line from each shopping list item to its exact match in the Materials section?"
+If NO → You invented something → DELETE IT
+If YES → Perfect match → Include it
+
+**CONCRETE EXAMPLE - STUDY THIS:**
+If the Materials section contains:
+"Primary antibody (1:1000), secondary antibody (1:5000), buffer, detection reagent, and assay plate."
+
+Then your JSON should have EXACTLY 5 items total:
+1. Primary antibody (1:1000)
+2. Secondary antibody (1:5000)  
+3. Buffer
+4. Detection reagent
+5. Assay plate
+
+DO NOT ADD:
+✗ "tubes" - NOT in Materials
+✗ "wash buffer" - Materials says "buffer", not "wash buffer"
+✗ "pipette tips" - NOT in Materials
+✗ "PBS" - NOT in Materials
+✗ "blocking buffer" - NOT in Materials
+
+If it's not explicitly written in Materials, DELETE IT from your output.
+
+For PRICING ONLY:
+- Use reasonable market prices: Antibodies $150-400, Enzymes $80-250, Buffers $30-90
+
+Return JSON:
+{{
+    "categories": [
+        {{
+            "name": "Antibodies & Proteins",
+            "items": [{{"name": "...", "concentration": "...", "quantity": "...", "estimated_price": 0, "checked": false}}]
+        }},
+        {{"name": "Reagents & Substrates", "items": [...]}},
+        {{"name": "Consumables", "items": [...]}},
+        {{"name": "Buffers & Solutions", "items": [...]}}
+    ],
+    "total_cost": 0
+}}"""
+
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=2500,
+                temperature=0.4,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+            
+            result = response.content[0].text
+            parsed = json.loads(result)
+            
+            # Calculate total cost
+            total = sum(
+                item["estimated_price"]
+                for category in parsed.get("categories", [])
+                for item in category.get("items", [])
+            )
+            parsed["total_cost"] = total
+            
+            return parsed
+            
+        except Exception as e:
+            raise Exception(f"Claude API error extracting reagents: {str(e)}")
 
 
 class OpenAIProvider(LLMProvider):
@@ -537,15 +800,27 @@ INSTRUCTIONS:
 1. Copy the original protocol text
 2. For each fix listed above, find the relevant section and make the specific change
 3. Add missing information where specified (temperatures, concentrations, controls, etc.)
-4. If a fix requires adding a new section (e.g., control group), add it in the appropriate place
-5. Keep other parts of the protocol unchanged
-6. The improved protocol MUST be different from the original - the fixes MUST be visible
+4. If a fix introduces NEW materials/reagents/controls/information, apply it EVERYWHERE it's relevant:
+   - Add to Materials section at the top
+   - Add to the specific protocol step where it's used
+   - Add to any other sections that reference it
+5. Ensure consistency throughout - if you add something, it should be mentioned in all relevant places
+6. If a fix requires adding a new section (e.g., control group), add it in the appropriate place
+7. Keep other parts of the protocol unchanged
+8. The improved protocol MUST be different from the original - the fixes MUST be visible
+
+CONSISTENCY RULE:
+- Any material/reagent/control added by a fix must be referenced consistently throughout the protocol
+- Materials section must list everything mentioned anywhere in the protocol
+- Each mention should be complete with specifications (concentration, quantity, timing, etc.)
+- This ensures the protocol is internally consistent and the shopping list will be accurate
 
 IMPORTANT: The "improved_protocol" field MUST show actual changes. Don't just copy the original.
 For example:
 - If a fix says "add temperature", the protocol must show "incubate at 37°C" instead of just "incubate"
 - If a fix says "add negative control", the protocol must have a new control group section
 - If a fix says "specify concentration", the protocol must show "2 mg/ml" instead of just "antibody"
+- If a fix adds BSA for blocking, BSA must be in BOTH the Materials section AND the blocking step AND anywhere else it's referenced
 
 Estimate the new success probability based on:
 - Original score + (5-10% per critical issue fixed) + (2-3% per warning fixed)
@@ -585,6 +860,143 @@ Return your response as a JSON object:
             
         except Exception as e:
             raise Exception(f"OpenAI API error generating improved protocol: {str(e)}")
+
+    def extract_reagents(self, protocol_text: str) -> Dict:
+        """Extract ALL reagents from protocol and generate shopping list with pricing"""
+        
+        prompt = f"""You are a laboratory procurement specialist. Your ONLY job is to copy items from the Materials section - nothing more.
+
+PROTOCOL:
+{protocol_text[:4000]}
+
+**🚨 CRITICAL DEMO REQUIREMENT - READ CAREFULLY:**
+
+This shopping list will be shown side-by-side with the protocol in a hackathon demo.
+The judges MUST see a PERFECT 1-to-1 match between the Materials section and the shopping list.
+If you add items not in Materials = looks like AI hallucination (DEMO FAILS)
+If you skip items in Materials = looks like broken feature (DEMO FAILS)
+
+**YOUR EXACT TASK:**
+1. Find the "Materials" section in the protocol above
+2. Extract EVERY item listed in that Materials section
+3. Extract NOTHING else - no assumptions, no helpful additions
+4. Use EXACT names as written (copy-paste accuracy)
+
+**FORBIDDEN BEHAVIORS (These will cause demo failure):**
+✗ DO NOT extract from "Procedure" / "Protocol Steps" / "Methods" sections
+✗ DO NOT extract from "Notes" / "Quality Control" sections
+✗ DO NOT add "common lab items" (pipette tips, tubes, gloves, timer, ice)
+✗ DO NOT expand abbreviations (if Materials says "BSA", don't say "Bovine Serum Albumin")
+✗ DO NOT add related items (if Materials says "buffer", don't add "wash buffer")
+✗ DO NOT assume typical ELISA/PCR/Western blot reagents
+✗ DO NOT be helpful - this is TEXT EXTRACTION, not protocol design
+
+**REQUIRED BEHAVIOR:**
+✓ Materials lists "Anti-IL-6 antibody" → Shopping list shows "Anti-IL-6 antibody"
+✓ Materials lists "PBS (pH 7.4)" → Shopping list shows "PBS (pH 7.4)"
+✓ Materials lists "96-well plate" → Shopping list shows "96-well plate"
+✓ Materials has 5 items → Shopping list shows EXACTLY 5 items
+✓ Materials has 12 items → Shopping list shows EXACTLY 12 items
+
+**LITMUS TEST:**
+Before returning, ask yourself: "Can I draw a line from each shopping list item to its exact match in the Materials section?"
+If NO → You invented something → DELETE IT
+If YES → Perfect match → Include it
+
+**CONCRETE EXAMPLE - STUDY THIS:**
+If the Materials section contains:
+"Primary antibody (1:1000), secondary antibody (1:5000), buffer, detection reagent, and assay plate."
+
+Then your JSON should have EXACTLY 5 items total:
+1. Primary antibody (1:1000)
+2. Secondary antibody (1:5000)  
+3. Buffer
+4. Detection reagent
+5. Assay plate
+
+DO NOT ADD:
+✗ "tubes" - NOT in Materials
+✗ "wash buffer" - Materials says "buffer", not "wash buffer"
+✗ "pipette tips" - NOT in Materials
+✗ "PBS" - NOT in Materials
+✗ "blocking buffer" - NOT in Materials
+
+If it's not explicitly written in Materials, DELETE IT from your output.
+
+For PRICING ONLY:
+- Use reasonable market prices: Antibodies $150-400, Enzymes $80-250, Buffers $30-90
+
+Return JSON:
+{{
+    "categories": [
+        {{
+            "name": "Antibodies & Proteins",
+            "items": [{{"name": "...", "concentration": "...", "quantity": "...", "estimated_price": 0, "checked": false}}]
+        }},
+        {{"name": "Reagents & Substrates", "items": [...]}},
+        {{"name": "Consumables", "items": [...]}},
+        {{"name": "Buffers & Solutions", "items": [...]}}
+    ],
+    "total_cost": 0
+}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+✓ Protocol says "Add 100 µL enzyme" → Extract: name="enzyme", quantity="100 µL"
+✗ Protocol says "antibody" (no concentration) → Extract: name="antibody", concentration="" (NOT "1-5 mg/mL")
+
+For PRICING ONLY:
+- Use reasonable market prices for the specified item
+- Do NOT invent high prices for vague items
+- Guidelines: Antibodies $150-400, Enzymes $80-250, Buffers $30-90, Chemicals $25-80
+
+Return JSON:
+{{
+    "categories": [
+        {{
+            "name": "Antibodies & Proteins",
+            "items": [{{"name": "...", "concentration": "...", "quantity": "...", "estimated_price": 0, "checked": false}}]
+        }},
+        {{"name": "Reagents & Substrates", "items": [...]}},
+        {{"name": "Consumables", "items": [...]}},
+        {{"name": "Buffers & Solutions", "items": [...]}}
+    ],
+    "total_cost": 0
+}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a laboratory procurement specialist who extracts reagent lists from protocols."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.4,
+                max_tokens=2500,
+                response_format={"type": "json_object"}
+            )
+            
+            result = response.choices[0].message.content
+            parsed = json.loads(result)
+            
+            # Calculate total cost
+            total = sum(
+                item["estimated_price"]
+                for category in parsed.get("categories", [])
+                for item in category.get("items", [])
+            )
+            parsed["total_cost"] = total
+            
+            return parsed
+            
+        except Exception as e:
+            raise Exception(f"OpenAI API error extracting reagents: {str(e)}")
 
 
 def get_llm_provider() -> LLMProvider:

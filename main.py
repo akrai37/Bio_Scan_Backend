@@ -156,6 +156,33 @@ async def generate_improved_protocol(request: ImprovedProtocolRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating improved protocol: {str(e)}")
 
+@app.post("/api/extract-reagents")
+async def extract_reagents(request: dict):
+    """
+    Extract ALL reagents from improved protocol
+    
+    Args:
+        request: dict containing protocol_text
+        
+    Returns:
+        Shopping list with ALL materials from improved protocol
+    """
+    try:
+        protocol_text = request.get("protocol_text", "")
+        
+        if not protocol_text:
+            raise HTTPException(status_code=400, detail="Protocol text is required")
+        
+        llm_provider = get_llm_provider()
+        shopping_list = llm_provider.extract_reagents(protocol_text)
+        
+        return shopping_list
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error extracting reagents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error extracting reagents: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
