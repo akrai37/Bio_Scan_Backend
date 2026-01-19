@@ -279,7 +279,47 @@ Return your response as a JSON object with this exact structure:
     def extract_reagents(self, protocol_text: str) -> Dict:
         """Extract ALL reagents from protocol and generate shopping list with pricing"""
         
-        prompt = f"""You are a laboratory procurement specialist. Your ONLY job is to copy items from the Materials section - nothing more.
+        prompt = f"""You are a text extraction specialist. Extract ONLY materials that are EXPLICITLY written word-for-word in the Materials section below.
+
+PROTOCOL TEXT:
+{protocol_text[:4000]}
+
+**🚨 ANTI-HALLUCINATION RULES - STRICTLY ENFORCE:**
+
+DO NOT add materials from your own knowledge.
+DO NOT infer materials that "should" be there.
+DO NOT be helpful by suggesting additional items.
+DO NOT use your training knowledge of typical lab protocols.
+
+If a material is NOT written word-for-word in the Materials section above, DO NOT include it.
+
+**STEP 1: LOCATE THE MATERIALS SECTION**
+Find the section labeled "Materials" in the protocol text above.
+Read ONLY that section. Ignore all other sections.
+
+**STEP 2: QUOTE VERIFICATION (MANDATORY)**
+For EACH item you want to extract, you MUST be able to point to the exact phrase in the Materials section.
+If you cannot find the exact text, DO NOT include it.
+
+**STEP 3: EXTRACT ONLY WHAT'S THERE**
+Copy the item names EXACTLY as written.
+DO NOT expand, DO NOT add related items, DO NOT be creative.
+
+**EXAMPLES OF HALLUCINATION (FORBIDDEN):**
+❌ Materials says "buffer" → You add "wash buffer" (WRONG - you invented "wash")
+❌ Materials says "antibody" → You add "blocking buffer" (WRONG - not mentioned)
+❌ Materials lists 5 items → You return 8 items (WRONG - you added 3)
+❌ You add "tubes" or "pipette tips" (WRONG - unless explicitly written)
+
+**CORRECT BEHAVIOR:**
+✅ Materials says "Primary antibody (1:1000)" → Extract: "Primary antibody (1:1000)"
+✅ Materials says "buffer" → Extract: "buffer" (NOT "wash buffer" or "blocking buffer")
+✅ Materials has 5 items → Return EXACTLY 5 items
+
+**FINAL VERIFICATION BEFORE RETURNING:**
+Go through your list and verify EACH item appears verbatim in the Materials section text above.
+Remove ANY item you cannot directly quote from the original Materials section.
+Count: If Materials has N items, your output MUST have exactly N items.
 
 PROTOCOL:
 {protocol_text[:4000]}
@@ -575,17 +615,47 @@ Return your response as a JSON object:
     def extract_reagents(self, protocol_text: str) -> Dict:
         """Extract ALL reagents from protocol and generate shopping list with pricing"""
         
-        prompt = f"""You are a laboratory procurement specialist. Your ONLY job is to copy items from the Materials section - nothing more.
+        prompt = f"""You are a text extraction specialist. Extract ONLY materials that are EXPLICITLY written word-for-word in the Materials section below.
 
-PROTOCOL:
+PROTOCOL TEXT:
 {protocol_text[:4000]}
 
-**🚨 CRITICAL DEMO REQUIREMENT - READ CAREFULLY:**
+**🚨 ANTI-HALLUCINATION RULES - STRICTLY ENFORCE:**
 
-This shopping list will be shown side-by-side with the protocol in a hackathon demo.
-The judges MUST see a PERFECT 1-to-1 match between the Materials section and the shopping list.
-If you add items not in Materials = looks like AI hallucination (DEMO FAILS)
-If you skip items in Materials = looks like broken feature (DEMO FAILS)
+DO NOT add materials from your own knowledge.
+DO NOT infer materials that "should" be there.
+DO NOT be helpful by suggesting additional items.
+DO NOT use your training knowledge of typical lab protocols.
+
+If a material is NOT written word-for-word in the Materials section above, DO NOT include it.
+
+**STEP 1: LOCATE THE MATERIALS SECTION**
+Find the section labeled "Materials" in the protocol text above.
+Read ONLY that section. Ignore all other sections.
+
+**STEP 2: QUOTE VERIFICATION (MANDATORY)**
+For EACH item you want to extract, you MUST be able to point to the exact phrase in the Materials section.
+If you cannot find the exact text, DO NOT include it.
+
+**STEP 3: EXTRACT ONLY WHAT'S THERE**
+Copy the item names EXACTLY as written.
+DO NOT expand, DO NOT add related items, DO NOT be creative.
+
+**EXAMPLES OF HALLUCINATION (FORBIDDEN):**
+❌ Materials says "buffer" → You add "wash buffer" (WRONG - you invented "wash")
+❌ Materials says "antibody" → You add "blocking buffer" (WRONG - not mentioned)
+❌ Materials lists 5 items → You return 8 items (WRONG - you added 3)
+❌ You add "tubes" or "pipette tips" (WRONG - unless explicitly written)
+
+**CORRECT BEHAVIOR:**
+✅ Materials says "Primary antibody (1:1000)" → Extract: "Primary antibody (1:1000)"
+✅ Materials says "buffer" → Extract: "buffer" (NOT "wash buffer" or "blocking buffer")
+✅ Materials has 5 items → Return EXACTLY 5 items
+
+**FINAL VERIFICATION BEFORE RETURNING:**
+Go through your list and verify EACH item appears verbatim in the Materials section text above.
+Remove ANY item you cannot directly quote from the original Materials section.
+Count: If Materials has N items, your output MUST have exactly N items.
 
 **YOUR EXACT TASK:**
 1. Find the "Materials" section in the protocol above
@@ -864,10 +934,47 @@ Return your response as a JSON object:
     def extract_reagents(self, protocol_text: str) -> Dict:
         """Extract ALL reagents from protocol and generate shopping list with pricing"""
         
-        prompt = f"""You are a laboratory procurement specialist. Your ONLY job is to copy items from the Materials section - nothing more.
+        prompt = f"""You are a text extraction specialist. Extract ONLY materials that are EXPLICITLY written word-for-word in the Materials section below.
 
-PROTOCOL:
+PROTOCOL TEXT:
 {protocol_text[:4000]}
+
+**🚨 ANTI-HALLUCINATION RULES - STRICTLY ENFORCE:**
+
+DO NOT add materials from your own knowledge.
+DO NOT infer materials that "should" be there.
+DO NOT be helpful by suggesting additional items.
+DO NOT use your training knowledge of typical lab protocols.
+
+If a material is NOT written word-for-word in the Materials section above, DO NOT include it.
+
+**STEP 1: LOCATE THE MATERIALS SECTION**
+Find the section labeled "Materials" in the protocol text above.
+Read ONLY that section. Ignore all other sections.
+
+**STEP 2: QUOTE VERIFICATION (MANDATORY)**
+For EACH item you want to extract, you MUST be able to point to the exact phrase in the Materials section.
+If you cannot find the exact text, DO NOT include it.
+
+**STEP 3: EXTRACT ONLY WHAT'S THERE**
+Copy the item names EXACTLY as written.
+DO NOT expand, DO NOT add related items, DO NOT be creative.
+
+**EXAMPLES OF HALLUCINATION (FORBIDDEN):**
+❌ Materials says "buffer" → You add "wash buffer" (WRONG - you invented "wash")
+❌ Materials says "antibody" → You add "blocking buffer" (WRONG - not mentioned)
+❌ Materials lists 5 items → You return 8 items (WRONG - you added 3)
+❌ You add "tubes" or "pipette tips" (WRONG - unless explicitly written)
+
+**CORRECT BEHAVIOR:**
+✅ Materials says "Primary antibody (1:1000)" → Extract: "Primary antibody (1:1000)"
+✅ Materials says "buffer" → Extract: "buffer" (NOT "wash buffer" or "blocking buffer")
+✅ Materials has 5 items → Return EXACTLY 5 items
+
+**FINAL VERIFICATION BEFORE RETURNING:**
+Go through your list and verify EACH item appears verbatim in the Materials section text above.
+Remove ANY item you cannot directly quote from the original Materials section.
+Count: If Materials has N items, your output MUST have exactly N items.
 
 **🚨 CRITICAL DEMO REQUIREMENT - READ CAREFULLY:**
 
@@ -925,30 +1032,6 @@ If it's not explicitly written in Materials, DELETE IT from your output.
 
 For PRICING ONLY:
 - Use reasonable market prices: Antibodies $150-400, Enzymes $80-250, Buffers $30-90
-
-Return JSON:
-{{
-    "categories": [
-        {{
-            "name": "Antibodies & Proteins",
-            "items": [{{"name": "...", "concentration": "...", "quantity": "...", "estimated_price": 0, "checked": false}}]
-        }},
-        {{"name": "Reagents & Substrates", "items": [...]}},
-        {{"name": "Consumables", "items": [...]}},
-        {{"name": "Buffers & Solutions", "items": [...]}}
-    ],
-    "total_cost": 0
-}}"""
-
-        try:
-            response = self.client.chat.completions.create(
-✓ Protocol says "Add 100 µL enzyme" → Extract: name="enzyme", quantity="100 µL"
-✗ Protocol says "antibody" (no concentration) → Extract: name="antibody", concentration="" (NOT "1-5 mg/mL")
-
-For PRICING ONLY:
-- Use reasonable market prices for the specified item
-- Do NOT invent high prices for vague items
-- Guidelines: Antibodies $150-400, Enzymes $80-250, Buffers $30-90, Chemicals $25-80
 
 Return JSON:
 {{

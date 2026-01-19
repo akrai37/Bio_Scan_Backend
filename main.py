@@ -3,9 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, List, Optional, Any
 import os
+import logging
 from dotenv import load_dotenv
 from pdf_parser import extract_text_from_pdf
 from llm_providers import get_llm_provider
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
